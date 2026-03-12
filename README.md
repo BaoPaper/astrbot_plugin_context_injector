@@ -226,7 +226,7 @@ $content
 - `command`：命令行字符串
 - `timeout_sec`：该模板自己的超时时间
 - `workdir_base`：工作目录的相对路径基准
-- `workdir`：可选工作目录
+- `custom_workdir`：自定义工作目录，填写后覆盖 `workdir_base`
 - `max_chars`：该模板自己的字符上限
 
 可直接使用 `executable + args`，也可填写 `command` 让插件自动拆分。
@@ -242,7 +242,7 @@ $content
   "args": ["status", "--short"],
   "timeout_sec": 5,
   "workdir_base": "根目录",
-  "workdir": "",
+  "custom_workdir": "",
   "max_chars": 4000
 }
 ```
@@ -251,6 +251,8 @@ $content
 
 - `executable + args` 是首选写法
 - `command` 会先拆分成参数，再执行
+- `custom_workdir` 为空时，会直接使用 `workdir_base` 对应的目录作为工作目录
+- 绝对路径必须位于 AstrBot 根目录、数据目录、技能目录或插件数据目录之下
 - `timeout_sec = 0` 表示改用全局 `default_command_timeout_sec`
 - `max_chars = 0` 表示改用全局 `default_max_chars`
 

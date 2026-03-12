@@ -156,6 +156,7 @@
           "workdir_base": {
             "type": "string",
             "description": "工作目录基准目录",
+            "hint": "未填写自定义工作目录时使用",
             "options": [
               "根目录",
               "数据目录",
@@ -164,9 +165,10 @@
             ],
             "default": "根目录"
           },
-          "workdir": {
+          "custom_workdir": {
             "type": "string",
-            "description": "工作目录",
+            "description": "自定义工作目录",
+            "hint": "填写后覆盖基准目录",
             "default": ""
           },
           "max_chars": {

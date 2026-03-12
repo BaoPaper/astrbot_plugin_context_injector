@@ -317,7 +317,11 @@ class ContextInjectorPlugin(Star):
             raise TemplateRenderError("文件模板路径为空")
 
         base_dir_key = item.get("base_dir", "skills")
-        file_path = self._resolve_path(file_path_raw.strip(), base_dir_key)
+        file_path = self._resolve_path(
+            file_path_raw.strip(),
+            base_dir_key,
+            default_base_dir="skills",
+        )
         if not file_path.is_file():
             raise TemplateRenderError(f"文件不存在: {file_path}")
 
@@ -335,16 +339,21 @@ class ContextInjectorPlugin(Star):
         if not isinstance(timeout, int) or timeout <= 0:
             timeout = self._default_command_timeout()
 
-        workdir: Path | None = None
-        workdir_value = item.get("workdir", "")
+        workdir_base_key = self._normalize_base_dir_key(
+            item.get("workdir_base", "root"),
+            default="root",
+        )
+        workdir: Path | None = self._base_dirs()[workdir_base_key]
+        workdir_value = item.get("custom_workdir", "")
         if isinstance(workdir_value, str) and workdir_value.strip():
             workdir = self._resolve_path(
                 workdir_value.strip(),
-                item.get("workdir_base", "root"),
+                workdir_base_key,
                 expect_file=False,
+                default_base_dir="root",
             )
-            if not workdir.exists() or not workdir.is_dir():
-                raise TemplateRenderError(f"工作目录不存在: {workdir}")
+        if not workdir.exists() or not workdir.is_dir():
+            raise TemplateRenderError(f"工作目录不存在: {workdir}")
 
         process = await asyncio.create_subprocess_exec(
             argv[0],
@@ -414,10 +423,14 @@ class ContextInjectorPlugin(Star):
         base_dir_key: Any,
         *,
         expect_file: bool = True,
+        default_base_dir: str = "skills",
     ) -> Path:
         candidate = Path(raw_path)
         roots = self._allowed_roots()
-        normalized_base_dir_key = self._normalize_base_dir_key(base_dir_key)
+        normalized_base_dir_key = self._normalize_base_dir_key(
+            base_dir_key,
+            default=default_base_dir,
+        )
 
         if candidate.is_absolute():
             resolved = candidate.resolve(strict=False)
@@ -431,12 +444,14 @@ class ContextInjectorPlugin(Star):
         resolved = (base_dir / candidate).resolve(strict=False)
         return self._ensure_under_root(resolved, base_dir, expect_file=expect_file)
 
-    def _normalize_base_dir_key(self, base_dir_key: Any) -> str:
+    def _normalize_base_dir_key(
+        self, base_dir_key: Any, default: str = "skills"
+    ) -> str:
         if isinstance(base_dir_key, str):
             normalized = BASE_DIR_KEY_MAP.get(base_dir_key.strip())
             if normalized:
                 return normalized
-        return "skills"
+        return default
 
     def _base_dirs(self) -> dict[str, Path]:
         return {
@@ -469,7 +484,10 @@ class ContextInjectorPlugin(Star):
             except ValueError:
                 continue
         target_type = "文件" if expect_file else "路径"
-        raise TemplateRenderError(f"{target_type}超出了允许的目录范围: {candidate}")
+        allowed = "、".join(str(root) for root in roots)
+        raise TemplateRenderError(
+            f"{target_type}超出了允许的目录范围: {candidate}；允许的目录: {allowed}",
+        )
 
     def _ensure_under_root(
         self,
