@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+import shlex
 from pathlib import Path
 from string import Template
 from typing import Any
@@ -327,9 +329,7 @@ class ContextInjectorPlugin(Star):
         return self._truncate_content(content, item.get("max_chars"))
 
     async def _run_command_template(self, item: dict[str, Any]) -> str:
-        command = item.get("command", "")
-        if not isinstance(command, str) or not command.strip():
-            raise TemplateRenderError("命令模板的命令不能为空")
+        argv = self._build_command_argv(item)
 
         timeout = item.get("timeout_sec")
         if not isinstance(timeout, int) or timeout <= 0:
@@ -346,8 +346,9 @@ class ContextInjectorPlugin(Star):
             if not workdir.exists() or not workdir.is_dir():
                 raise TemplateRenderError(f"工作目录不存在: {workdir}")
 
-        process = await asyncio.create_subprocess_shell(
-            command,
+        process = await asyncio.create_subprocess_exec(
+            argv[0],
+            *argv[1:],
             cwd=str(workdir) if workdir else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -368,6 +369,34 @@ class ContextInjectorPlugin(Star):
                 f"命令退出码为 {process.returncode}: {output or '无输出'}",
             )
         return self._truncate_content(output, item.get("max_chars"))
+
+    def _build_command_argv(self, item: dict[str, Any]) -> list[str]:
+        executable = item.get("executable", "")
+        if isinstance(executable, str) and executable.strip():
+            argv = [executable.strip()]
+            raw_args = item.get("args", [])
+            if raw_args is None:
+                raw_args = []
+            if not isinstance(raw_args, list):
+                raise TemplateRenderError("命令模板的 args 必须是字符串列表")
+            for arg in raw_args:
+                if not isinstance(arg, str):
+                    raise TemplateRenderError("命令模板的 args 必须是字符串列表")
+                argv.append(arg)
+            return argv
+
+        command = item.get("command", "")
+        if not isinstance(command, str) or not command.strip():
+            raise TemplateRenderError("命令模板至少需要提供 executable 或 command")
+
+        try:
+            argv = shlex.split(command, posix=os.name != "nt")
+        except ValueError as exc:
+            raise TemplateRenderError(f"命令解析失败: {exc}") from exc
+
+        if not argv:
+            raise TemplateRenderError("命令模板解析后为空")
+        return argv
 
     def _truncate_content(self, content: str, override: Any) -> str:
         limit = (

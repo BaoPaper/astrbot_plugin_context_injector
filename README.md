@@ -209,15 +209,27 @@ $content
 
 ### 3. 命令模板
 
-适合读取动态信息，比如 git 状态、系统时间、某段命令输出。
+适合读取动态信息，比如 git 状态、系统时间、某个程序的输出。
+
+命令模板会自动拆分命令，再按参数执行。
+
+这意味着：
+
+- 不会把整段命令交给 shell 解释。
+- 不支持管道、重定向、`&&`、通配符展开、环境变量展开等 shell 语法。
+- 如果需要复杂逻辑，建议封装成独立脚本或可执行文件，再通过命令模板调用。
 
 额外字段：
 
-- `command`：要执行的命令
+- `executable`：要执行的程序名或可执行文件路径
+- `args`：传给程序的参数列表
+- `command`：命令行字符串
 - `timeout_sec`：该模板自己的超时时间
 - `workdir_base`：工作目录的相对路径基准
 - `workdir`：可选工作目录
 - `max_chars`：该模板自己的字符上限
+
+可直接使用 `executable + args`，也可填写 `command` 让插件自动拆分。
 
 示例：
 
@@ -226,7 +238,8 @@ $content
   "__template_key": "command",
   "enabled": true,
   "alias": "git_status",
-  "command": "git status --short",
+  "executable": "git",
+  "args": ["status", "--short"],
   "timeout_sec": 5,
   "workdir_base": "根目录",
   "workdir": "",
@@ -236,6 +249,8 @@ $content
 
 其中：
 
+- `executable + args` 是首选写法
+- `command` 会先拆分成参数，再执行
 - `timeout_sec = 0` 表示改用全局 `default_command_timeout_sec`
 - `max_chars = 0` 表示改用全局 `default_max_chars`
 

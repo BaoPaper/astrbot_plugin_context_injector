@@ -1,27 +1,27 @@
 {
   "enabled": {
     "type": "bool",
-    "description": "是否启用上下文模板注入。",
+    "description": "启用插件",
     "default": true
   },
   "expand_prompt_placeholders": {
     "type": "bool",
-    "description": "是否展开用户提示词中的 {{ctx:alias}} 占位符。",
+    "description": "展开 {{ctx:alias}}",
     "default": true
   },
   "append_aliases": {
     "type": "list",
-    "description": "始终追加到 system_prompt 末尾的模板别名列表。",
+    "description": "自动注入的模板别名",
     "default": []
   },
   "append_separator": {
     "type": "text",
-    "description": "追加多个模板时使用的分隔符。",
+    "description": "自动注入分隔符",
     "default": "\n\n"
   },
   "missing_behavior": {
     "type": "string",
-    "description": "模板不存在或渲染失败时的处理方式。",
+    "description": "模板失败时的处理方式",
     "options": [
       "跳过",
       "保留原样",
@@ -31,27 +31,27 @@
   },
   "default_block_template": {
     "type": "text",
-    "description": "默认模板包裹格式，支持 $alias、$source_type 和 $content。",
+    "description": "默认包裹格式 支持 $alias、$source_type、$content",
     "default": "<context_template alias=\"$alias\" source=\"$source_type\">\n$content\n</context_template>"
   },
   "error_template": {
     "type": "text",
-    "description": "当处理方式为“插入错误”时使用的错误模板，支持 $alias 和 $reason。",
+    "description": "错误模板 支持 $alias、$reason",
     "default": "[上下文模板错误: $alias -> $reason]"
   },
   "default_max_chars": {
     "type": "int",
-    "description": "文件模板或命令模板未单独设置限制时的默认最大字符数。",
+    "description": "默认最大字符数",
     "default": 12000
   },
   "default_command_timeout_sec": {
     "type": "int",
-    "description": "命令模板的默认超时时间（秒）。",
+    "description": "默认命令超时（秒）",
     "default": 10
   },
   "templates": {
     "type": "template_list",
-    "description": "上下文模板列表。",
+    "description": "模板列表",
     "default": [],
     "templates": {
       "text": {
@@ -59,22 +59,22 @@
         "items": {
           "enabled": {
             "type": "bool",
-            "description": "是否启用该模板。",
+            "description": "启用模板",
             "default": true
           },
           "alias": {
             "type": "string",
-            "description": "模板别名，可用于 append_aliases 或 {{ctx:alias}}。",
+            "description": "模板别名",
             "default": "note"
           },
           "block_template": {
             "type": "text",
-            "description": "可选的单模板包裹格式，支持 $alias、$source_type 和 $content。",
+            "description": "单模板包裹格式",
             "default": ""
           },
           "content": {
             "type": "text",
-            "description": "原始文本内容。",
+            "description": "文本内容",
             "default": ""
           }
         }
@@ -84,17 +84,17 @@
         "items": {
           "enabled": {
             "type": "bool",
-            "description": "是否启用该模板。",
+            "description": "启用模板",
             "default": true
           },
           "alias": {
             "type": "string",
-            "description": "模板别名，可用于 append_aliases 或 {{ctx:alias}}。",
+            "description": "模板别名",
             "default": "file_context"
           },
           "base_dir": {
             "type": "string",
-            "description": "当路径为相对路径时，所使用的基准目录。",
+            "description": "相对路径基准目录",
             "options": [
               "技能目录",
               "数据目录",
@@ -105,17 +105,17 @@
           },
           "path": {
             "type": "string",
-            "description": "绝对路径，或相对于基准目录的路径。",
+            "description": "文件路径",
             "default": "context.txt"
           },
           "max_chars": {
             "type": "int",
-            "description": "可选的单模板输出上限。0 表示使用默认值。",
+            "description": "字符上限 0 为默认",
             "default": 0
           },
           "block_template": {
             "type": "text",
-            "description": "可选的单模板包裹格式，支持 $alias、$source_type 和 $content。",
+            "description": "单模板包裹格式",
             "default": ""
           }
         }
@@ -125,27 +125,37 @@
         "items": {
           "enabled": {
             "type": "bool",
-            "description": "是否启用该模板。",
+            "description": "启用模板",
             "default": true
           },
           "alias": {
             "type": "string",
-            "description": "模板别名，可用于 append_aliases 或 {{ctx:alias}}。",
+            "description": "模板别名",
             "default": "git_status"
+          },
+          "executable": {
+            "type": "string",
+            "description": "程序名或可执行文件路径",
+            "default": ""
+          },
+          "args": {
+            "type": "list",
+            "description": "参数列表",
+            "default": []
           },
           "command": {
             "type": "text",
-            "description": "要执行的 Shell 命令。",
+            "description": "命令行字符串 会自动拆分执行",
             "default": ""
           },
           "timeout_sec": {
             "type": "int",
-            "description": "可选的单模板超时时间。0 表示使用默认值。",
+            "description": "超时秒数 0 为默认",
             "default": 0
           },
           "workdir_base": {
             "type": "string",
-            "description": "当工作目录为相对路径时，所使用的基准目录。",
+            "description": "工作目录基准目录",
             "options": [
               "根目录",
               "数据目录",
@@ -156,17 +166,17 @@
           },
           "workdir": {
             "type": "string",
-            "description": "可选的工作目录。绝对路径必须位于 AstrBot 根目录相关范围内。",
+            "description": "工作目录",
             "default": ""
           },
           "max_chars": {
             "type": "int",
-            "description": "可选的单模板输出上限。0 表示使用默认值。",
+            "description": "字符上限 0 为默认",
             "default": 0
           },
           "block_template": {
             "type": "text",
-            "description": "可选的单模板包裹格式，支持 $alias、$source_type 和 $content。",
+            "description": "单模板包裹格式",
             "default": ""
           }
         }
