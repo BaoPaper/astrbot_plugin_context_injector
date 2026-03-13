@@ -5,6 +5,8 @@ import codecs
 import os
 import re
 import shlex
+import signal
+import subprocess
 from pathlib import Path
 from string import Template
 from typing import Any
@@ -56,7 +58,7 @@ class TemplateRenderError(RuntimeError):
     PLUGIN_NAME,
     "BaoPaper",
     "将可复用的文本、文件和命令模板注入到 LLM 请求中。",
-    "0.2.4",
+    "0.2.5",
 )
 class ContextInjectorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -400,6 +402,7 @@ class ContextInjectorPlugin(Star):
             cwd=str(workdir) if workdir else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            **self._subprocess_creation_kwargs(),
         )
         try:
             output, truncated = await asyncio.wait_for(
@@ -407,7 +410,7 @@ class ContextInjectorPlugin(Star):
                 timeout=timeout,
             )
         except TimeoutError as exc:
-            self._kill_process(process)
+            await self._kill_process_tree(process)
             await process.wait()
             raise TemplateRenderError(
                 f"命令执行超时，已超过 {timeout} 秒",
@@ -506,26 +509,61 @@ class ContextInjectorPlugin(Star):
             text = decoder.decode(chunk)
             total, truncated = self._append_limited_text(parts, total, text, limit)
             if truncated:
-                self._kill_process(process)
+                await self._kill_process_tree(process)
                 break
 
         if not truncated:
             tail = decoder.decode(b"", final=True)
             total, truncated = self._append_limited_text(parts, total, tail, limit)
             if truncated:
-                self._kill_process(process)
+                await self._kill_process_tree(process)
 
         await process.wait()
         return "".join(parts), truncated
 
-    def _kill_process(self, process: asyncio.subprocess.Process) -> None:
+    def _subprocess_creation_kwargs(self) -> dict[str, Any]:
+        if os.name == "nt":
+            return {
+                "creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            }
+        return {"start_new_session": True}
+
+    async def _kill_process_tree(self, process: asyncio.subprocess.Process) -> None:
         if process.returncode is not None:
             return
 
+        if os.name == "nt":
+            await self._kill_process_tree_windows(process)
+            return
+
         try:
-            process.kill()
+            os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             return
+
+    async def _kill_process_tree_windows(
+        self,
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        if process.pid is None:
+            return
+
+        try:
+            taskkill = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/F",
+                "/T",
+                "/PID",
+                str(process.pid),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except FileNotFoundError:
+            process.kill()
+            return
+
+        await taskkill.wait()
 
     def _append_limited_text(
         self,
