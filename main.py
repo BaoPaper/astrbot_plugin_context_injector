@@ -55,7 +55,7 @@ class TemplateRenderError(RuntimeError):
     PLUGIN_NAME,
     "BaoPaper",
     "将可复用的文本、文件和命令模板注入到 LLM 请求中。",
-    "0.2.0",
+    "0.2.3",
 )
 class ContextInjectorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -73,12 +73,16 @@ class ContextInjectorPlugin(Star):
             return
 
         cache: dict[str, tuple[bool, str]] = {}
+        prompt_injected_aliases: list[str] = []
 
         if self._expand_prompt_placeholders() and req.prompt:
-            req.prompt = await self._expand_prompt(req.prompt, cache)
+            req.prompt, prompt_injected_aliases = await self._expand_prompt(
+                req.prompt, cache
+            )
 
-        append_blocks = await self._render_append_blocks(cache)
+        append_blocks, append_injected_aliases = await self._render_append_blocks(cache)
         if not append_blocks:
+            self._log_injected_templates(prompt_injected_aliases, [])
             return
 
         suffix = self._append_separator().join(append_blocks)
@@ -86,6 +90,8 @@ class ContextInjectorPlugin(Star):
             req.system_prompt = f"{req.system_prompt}{self._append_separator()}{suffix}"
         else:
             req.system_prompt = suffix
+
+        self._log_injected_templates(prompt_injected_aliases, append_injected_aliases)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("ctx_preview", alias={"ctxpreview"})
@@ -116,7 +122,7 @@ class ContextInjectorPlugin(Star):
 
         append_aliases = self._append_aliases()
         available_aliases = sorted(self._templates().keys())
-        append_blocks = await self._render_append_blocks(cache)
+        append_blocks, _ = await self._render_append_blocks(cache)
 
         if append_blocks:
             preview = self._append_separator().join(append_blocks)
@@ -208,49 +214,73 @@ class ContextInjectorPlugin(Star):
         self,
         prompt: str,
         cache: dict[str, tuple[bool, str]],
-    ) -> str:
-        aliases = {match.group(1) for match in PLACEHOLDER_RE.finditer(prompt)}
+    ) -> tuple[str, list[str]]:
+        aliases = list(
+            dict.fromkeys(match.group(1) for match in PLACEHOLDER_RE.finditer(prompt))
+        )
         replacements: dict[str, str] = {}
+        injected_aliases: list[str] = []
 
         for alias in aliases:
-            replacements[alias] = await self._resolve_placeholder(alias, cache)
+            replacements[alias], injected = await self._resolve_placeholder(
+                alias, cache
+            )
+            if injected:
+                injected_aliases.append(alias)
 
         def replace_match(match: re.Match[str]) -> str:
             alias = match.group(1)
             return replacements.get(alias, match.group(0))
 
-        return PLACEHOLDER_RE.sub(replace_match, prompt)
+        return PLACEHOLDER_RE.sub(replace_match, prompt), injected_aliases
 
     async def _render_append_blocks(
         self,
         cache: dict[str, tuple[bool, str]],
-    ) -> list[str]:
+    ) -> tuple[list[str], list[str]]:
         blocks: list[str] = []
+        injected_aliases: list[str] = []
         for alias in self._append_aliases():
             ok, text = await self._render_template(alias, cache)
             if ok and text:
                 blocks.append(text)
+                injected_aliases.append(alias)
                 continue
 
             if self._missing_behavior() == "insert_error":
                 blocks.append(self._render_error(alias, text))
-        return blocks
+        return blocks, injected_aliases
 
     async def _resolve_placeholder(
         self,
         alias: str,
         cache: dict[str, tuple[bool, str]],
-    ) -> str:
+    ) -> tuple[str, bool]:
         ok, text = await self._render_template(alias, cache)
         if ok:
-            return text
+            return text, True
 
         behavior = self._missing_behavior()
         if behavior == "preserve":
-            return f"{{{{ctx:{alias}}}}}"
+            return f"{{{{ctx:{alias}}}}}", False
         if behavior == "insert_error":
-            return self._render_error(alias, text)
-        return ""
+            return self._render_error(alias, text), False
+        return "", False
+
+    def _log_injected_templates(
+        self,
+        prompt_aliases: list[str],
+        append_aliases: list[str],
+    ) -> None:
+        if not prompt_aliases and not append_aliases:
+            return
+
+        parts: list[str] = []
+        if prompt_aliases:
+            parts.append(f"prompt={','.join(prompt_aliases)}")
+        if append_aliases:
+            parts.append(f"append={','.join(append_aliases)}")
+        logger.info("上下文模板已注入: %s", " | ".join(parts))
 
     async def _render_template(
         self,
