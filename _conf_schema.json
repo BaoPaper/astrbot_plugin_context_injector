@@ -49,6 +49,11 @@
     "description": "默认命令超时（秒）",
     "default": 10
   },
+  "read_chunk_size": {
+    "type": "int",
+    "description": "每次读取块大小",
+    "default": 4096
+  },
   "templates": {
     "type": "template_list",
     "description": "模板列表",

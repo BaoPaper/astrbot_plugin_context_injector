@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import os
 import re
 import shlex
@@ -55,7 +56,7 @@ class TemplateRenderError(RuntimeError):
     PLUGIN_NAME,
     "BaoPaper",
     "将可复用的文本、文件和命令模板注入到 LLM 请求中。",
-    "0.2.3",
+    "0.2.4",
 )
 class ContextInjectorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -179,6 +180,10 @@ class ContextInjectorPlugin(Star):
     def _default_command_timeout(self) -> int:
         value = self.config.get("default_command_timeout_sec", 10)
         return value if isinstance(value, int) and value > 0 else 10
+
+    def _read_chunk_size(self) -> int:
+        value = self.config.get("read_chunk_size", 4096)
+        return value if isinstance(value, int) and value > 0 else 4096
 
     def _append_aliases(self) -> list[str]:
         aliases = self.config.get("append_aliases", [])
@@ -355,15 +360,19 @@ class ContextInjectorPlugin(Star):
         if not file_path.is_file():
             raise TemplateRenderError(f"文件不存在: {file_path}")
 
-        content = await asyncio.to_thread(
-            file_path.read_text,
-            encoding="utf-8",
-            errors="replace",
+        limit = self._content_limit(item.get("max_chars"))
+        content, truncated = await asyncio.to_thread(
+            self._read_text_file_limited,
+            file_path,
+            limit,
         )
-        return self._truncate_content(content, item.get("max_chars"))
+        if truncated:
+            return self._format_truncated_content(content, limit)
+        return content
 
     async def _run_command_template(self, item: dict[str, Any]) -> str:
         argv = self._build_command_argv(item)
+        limit = self._content_limit(item.get("max_chars"))
 
         timeout = item.get("timeout_sec")
         if not isinstance(timeout, int) or timeout <= 0:
@@ -393,21 +402,25 @@ class ContextInjectorPlugin(Star):
             stderr=asyncio.subprocess.STDOUT,
         )
         try:
-            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            output, truncated = await asyncio.wait_for(
+                self._read_process_output_limited(process, limit),
+                timeout=timeout,
+            )
         except TimeoutError as exc:
-            process.kill()
-            await process.communicate()
+            self._kill_process(process)
+            await process.wait()
             raise TemplateRenderError(
                 f"命令执行超时，已超过 {timeout} 秒",
             ) from exc
 
-        output = stdout.decode("utf-8", errors="replace") if stdout else ""
         output = output.strip()
-        if process.returncode not in (0, None):
+        if process.returncode not in (0, None) and not truncated:
             raise TemplateRenderError(
                 f"命令退出码为 {process.returncode}: {output or '无输出'}",
             )
-        return self._truncate_content(output, item.get("max_chars"))
+        if truncated:
+            return self._format_truncated_content(output, limit)
+        return output
 
     def _build_command_argv(self, item: dict[str, Any]) -> list[str]:
         executable = item.get("executable", "")
@@ -438,14 +451,101 @@ class ContextInjectorPlugin(Star):
         return argv
 
     def _truncate_content(self, content: str, override: Any) -> str:
-        limit = (
+        limit = self._content_limit(override)
+        if len(content) <= limit:
+            return content
+        return self._format_truncated_content(content, limit)
+
+    def _content_limit(self, override: Any) -> int:
+        return (
             override
             if isinstance(override, int) and override > 0
             else self._default_max_chars()
         )
-        if len(content) <= limit:
-            return content
+
+    def _format_truncated_content(self, content: str, limit: int) -> str:
         return f"{content[:limit]}\n... [已截断到 {limit} 个字符]"
+
+    def _read_text_file_limited(self, file_path: Path, limit: int) -> tuple[str, bool]:
+        max_chars = limit + 1
+        parts: list[str] = []
+        total = 0
+
+        with file_path.open("r", encoding="utf-8", errors="replace") as file:
+            while total < max_chars:
+                chunk = file.read(min(self._read_chunk_size(), max_chars - total))
+                if not chunk:
+                    break
+                parts.append(chunk)
+                total += len(chunk)
+
+        content = "".join(parts)
+        if len(content) > limit:
+            return content[:limit], True
+        return content, False
+
+    async def _read_process_output_limited(
+        self,
+        process: asyncio.subprocess.Process,
+        limit: int,
+    ) -> tuple[str, bool]:
+        if process.stdout is None:
+            await process.wait()
+            return "", False
+
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        parts: list[str] = []
+        total = 0
+        truncated = False
+
+        while True:
+            chunk = await process.stdout.read(self._read_chunk_size())
+            if not chunk:
+                break
+
+            text = decoder.decode(chunk)
+            total, truncated = self._append_limited_text(parts, total, text, limit)
+            if truncated:
+                self._kill_process(process)
+                break
+
+        if not truncated:
+            tail = decoder.decode(b"", final=True)
+            total, truncated = self._append_limited_text(parts, total, tail, limit)
+            if truncated:
+                self._kill_process(process)
+
+        await process.wait()
+        return "".join(parts), truncated
+
+    def _kill_process(self, process: asyncio.subprocess.Process) -> None:
+        if process.returncode is not None:
+            return
+
+        try:
+            process.kill()
+        except ProcessLookupError:
+            return
+
+    def _append_limited_text(
+        self,
+        parts: list[str],
+        total: int,
+        text: str,
+        limit: int,
+    ) -> tuple[int, bool]:
+        if not text:
+            return total, False
+
+        remaining = limit - total
+        if remaining <= 0:
+            return total, True
+        if len(text) <= remaining:
+            parts.append(text)
+            return total + len(text), False
+
+        parts.append(text[:remaining])
+        return limit, True
 
     def _resolve_path(
         self,
